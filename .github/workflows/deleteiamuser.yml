@@ -6,9 +6,6 @@ on:
       resource_name:
         description: 'Enter the resource name to destroy (e.g., module.IAM.aws_iam_user.khayuser)'
         required: true
-      user_name:
-        description: 'Enter just the username (e.g., khayuser)'
-        required: true
       confirm_destroy:
         description: 'Type "YES" to confirm destruction'
         required: true
@@ -48,34 +45,35 @@ jobs:
         run: terraform validate
         working-directory: Terraform
 
-      - name: Remove User From Groups (AWS CLI)
+      - name: Extract Group Relationships First
         run: |
-          GROUPS=$(aws iam list-groups-for-user --user-name ${{ github.event.inputs.user_name }} --query 'Groups[*].GroupName' --output text || echo "")
-          if [ -n "$GROUPS" ]; then
-            for group in $GROUPS; do
-              echo "Removing user from group: $group"
-              aws iam remove-user-from-group --user-name ${{ github.event.inputs.user_name }} --group-name "$group"
-            done
-          else
-            echo "No groups found for this user"
-          fi
+          echo "Extracting user information first from Terraform state..."
+          terraform state show ${{ github.event.inputs.resource_name }} || echo "User might already be gone from state"
+        working-directory: Terraform
 
-      - name: Remove User Access Keys (AWS CLI)
-        run: |
-          KEYS=$(aws iam list-access-keys --user-name ${{ github.event.inputs.user_name }} --query 'AccessKeyMetadata[*].AccessKeyId' --output text || echo "")
-          if [ -n "$KEYS" ]; then
-            for key in $KEYS; do
-              echo "Deleting access key: $key"
-              aws iam delete-access-key --user-name ${{ github.event.inputs.user_name }} --access-key-id "$key"
-            done
-          else
-            echo "No access keys found for this user"
-          fi
-
-      - name: Terraform Plan (Destroy Specific Resource)
+      - name: Terraform Plan (Destroy Specific Resource) - First Try
+        id: plan
+        continue-on-error: true
         run: terraform plan -destroy -target=${{ github.event.inputs.resource_name }}
         working-directory: Terraform
 
-      - name: Terraform Destroy (Selected Resource)
+      - name: Find Dependencies Using Import (If Plan Failed)
+        if: steps.plan.outcome == 'failure'
+        run: |
+          echo "Plan failed - checking for dependencies using state list..."
+          terraform state list | grep iam | grep group | grep membership || echo "No group memberships found"
+        working-directory: Terraform
+        
+      - name: Remove State Dependencies 
+        run: |
+          echo "Looking for group membership dependencies..."
+          for dep in $(terraform state list | grep iam | grep membership); do
+            echo "Removing potential dependency: $dep"
+            terraform state rm $dep || echo "Couldn't remove $dep, continuing..."
+          done
+        working-directory: Terraform
+        continue-on-error: true
+
+      - name: Terraform Force Destroy
         run: terraform destroy -auto-approve -target=${{ github.event.inputs.resource_name }}
         working-directory: Terraform
