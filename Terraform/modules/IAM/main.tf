@@ -9,8 +9,4 @@ resource "aws_iam_group_policy_attachment" "iam_group_policy" {
   policy_arn = var.policy_arn
 }
 
-resource "aws_iam_group_membership" "iam_group_membership" {
-  name  = "${var.iam_group_name}-membership"
-  group = aws_iam_group.iam_group.name
-  users = []
-}
+
