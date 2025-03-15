@@ -1,0 +1,54 @@
+name: Destroy IAM User
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_name:
+        description: 'Enter the resource name to destroy (e.g., module.IAM.aws_iam_user.khayuser)'
+        required: true
+      confirm_destroy:
+        description: 'Type "YES" to confirm destruction'
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform-destroy-resource:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check confirmation
+        if: github.event.inputs.confirm_destroy != 'YES'
+        run: echo "Destruction not confirmed. Exiting." && exit 1
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: Terraform
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: Terraform
+
+      - name: Terraform Plan (Destroy Specific Resource)
+        run: terraform plan -destroy -target=${{ github.event.inputs.resource_name }}
+        working-directory: Terraform
+
+      - name: Terraform Destroy (Selected Resource)
+        run: terraform destroy -auto-approve -target=${{ github.event.inputs.resource_name }}
+        working-directory: Terraform
